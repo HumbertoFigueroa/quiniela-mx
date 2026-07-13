@@ -187,6 +187,9 @@ async function renderLive() {
       <tr><th>#</th><th>Jugador</th><th class="num">Aciertos</th><th class="num">Goles</th></tr>` +
       data.standings.map((r, i) => {
         const isWinner = data.winners.includes(r.user_id) && (j.finalized || j.all_final);
+        const total = data.matches.length;
+        const enJuego = r.live_points > r.points; // va acertando en partidos aún en juego
+        const aciertos = `<b>${r.live_points ?? r.points}/${total}</b>${enJuego ? ' <small style="color:var(--gold)">●</small>' : ''}`;
         const goles = r.goals_prediction === null ? '—'
           : `${r.goals_prediction}${r.goals_diff !== null ? ` <small style="color:var(--muted)">(±${r.goals_diff})</small>` : ''}`;
         const chips = data.matches.map(m => {
@@ -199,7 +202,7 @@ async function renderLive() {
         return `<tr class="row-click ${isWinner ? 'winner' : ''} ${r.user_id === me.id ? 'me' : ''}" onclick="toggleDetail(${r.user_id})">
           <td>${isWinner ? '🏆' : i + 1}</td>
           <td>${esc(r.nickname)}${r.complete ? '' : ' <small style="color:var(--red)">(incompleta)</small>'}</td>
-          <td class="num"><b>${r.points}</b></td>
+          <td class="num">${aciertos}</td>
           <td class="num">${goles}</td>
         </tr>
         <tr id="detail-${r.user_id}" class="hidden"><td colspan="4"><div class="pick-detail">${chips}</div></td></tr>`;

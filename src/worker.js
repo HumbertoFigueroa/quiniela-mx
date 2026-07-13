@@ -61,7 +61,7 @@ route('GET', '/api/jornadas/:id', async ({ env, params, user }) => {
   if (!data.jornada.locked) {
     // Antes del cierre cada quien solo ve su propia quiniela
     data.standings = data.standings.map(r => r.user_id === user.id ? r
-      : { ...r, points: 0, goals_prediction: null, goals_diff: null, picks: undefined });
+      : { ...r, points: 0, live_points: 0, goals_prediction: null, goals_diff: null, picks: undefined });
   }
   return json(data);
 });

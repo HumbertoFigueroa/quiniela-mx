@@ -37,7 +37,8 @@ export async function jornadaStandings(env, jornadaId) {
     const userPicks = picksByUser.get(u.id) || new Map();
     const complete = matches.length > 0 && matches.every(m => userPicks.has(m.id)) && goalByUser.has(u.id);
     if (!complete && userPicks.size === 0) continue; // nunca participó en esta jornada
-    let points = 0;
+    let points = 0;       // aciertos confirmados (partidos terminados) — decide al ganador
+    let livePoints = 0;   // aciertos en tiempo real (incluye partidos en juego)
     const detail = {};
     for (const m of matches) {
       const pick = userPicks.get(m.id) || null;
@@ -45,18 +46,22 @@ export async function jornadaStandings(env, jornadaId) {
       if (m.state === 'post') result = pick === matchWinner(m) ? 'hit' : 'miss';
       else if (m.state === 'in' && pick) result = pick === matchWinner(m) ? 'hitting' : 'missing';
       if (m.state === 'post' && pick === matchWinner(m)) points++;
+      if (result === 'hit' || result === 'hitting') livePoints++;
       detail[m.id] = { pick, result };
     }
     const goals = goalByUser.has(u.id) ? goalByUser.get(u.id) : null;
     rows.push({
       user_id: u.id, nickname: u.nickname, complete, points,
+      live_points: livePoints,
       goals_prediction: goals,
       goals_diff: goals === null ? null : Math.abs(goals - actualGoals),
       picks: locked ? detail : undefined  // ocultas hasta el cierre
     });
   }
 
-  rows.sort((a, b) => b.points - a.points
+  // Orden en vivo: aciertos al momento, luego cercanía a goles
+  rows.sort((a, b) => b.live_points - a.live_points
+    || b.points - a.points
     || (a.goals_diff ?? 999) - (b.goals_diff ?? 999)
     || a.nickname.localeCompare(b.nickname));
 

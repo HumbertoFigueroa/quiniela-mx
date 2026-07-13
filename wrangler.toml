@@ -16,4 +16,4 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "quiniela"
-database_id = "PENDIENTE"
+database_id = "48052e15-141c-492e-be8d-17a1b11a8ee9"

@@ -17,12 +17,10 @@ function parseEvent(e) {
     home_score: parseInt(home.score || '0', 10),
     away_score: parseInt(away.score || '0', 10),
     state: e.status?.type?.state || 'pre',   // pre | in | post
-    clock: e.status?.type?.state === 'in' ? (e.status.displayClock || '') : (e.status?.type?.shortDetail || ''),
-    venue: comp.venue?.fullName || ''
+    clock: e.status?.type?.state === 'in' ? (e.status.displayClock || '') : (e.status?.type?.shortDetail || '')
   };
 }
 
-// yyyymmdd para la API de ESPN
 function fmtDate(d) {
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
@@ -36,18 +34,16 @@ async function fetchScoreboard(fromDate, toDate) {
 }
 
 // Próximos partidos (para que el admin arme la jornada)
-async function fetchUpcoming(days = 10) {
+export async function fetchUpcoming(days = 12) {
   const now = new Date();
   const to = new Date(now.getTime() + days * 24 * 3600 * 1000);
   return fetchScoreboard(now, to);
 }
 
 // Partidos en un rango que cubre los kickoffs dados (para actualizar marcadores)
-async function fetchForKickoffs(kickoffs) {
-  const dates = kickoffs.map(k => new Date(k));
+export async function fetchForKickoffs(kickoffs) {
+  const dates = kickoffs.map(k => new Date(k).getTime());
   const from = new Date(Math.min(...dates) - 24 * 3600 * 1000);
   const to = new Date(Math.max(...dates) + 24 * 3600 * 1000);
   return fetchScoreboard(from, to);
 }
-
-module.exports = { fetchUpcoming, fetchForKickoffs };

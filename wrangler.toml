@@ -1,0 +1,19 @@
+name = "quiniela-liga-mx"
+main = "src/worker.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Frontend estático (se sirve gratis desde el CDN de Cloudflare)
+[assets]
+directory = "public"
+
+# Sincronización de marcadores: corre cada minuto en la nube
+[triggers]
+crons = ["* * * * *"]
+
+# Base de datos D1 (gratis). El database_id se llena al crearla:
+#   npx wrangler d1 create quiniela
+[[d1_databases]]
+binding = "DB"
+database_name = "quiniela"
+database_id = "PENDIENTE"

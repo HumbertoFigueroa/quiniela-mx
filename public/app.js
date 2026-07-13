@@ -116,7 +116,7 @@ async function enterApp() {
   $('#app').classList.remove('hidden');
   $('#nav-admin').classList.toggle('hidden', !me.is_admin);
   registerSW();
-  connectSSE();
+  startPolling();
   refreshNotifButton();
   showView('live');
 }
@@ -128,20 +128,18 @@ function render() {
   });
 }
 
-// ---------- SSE (tiempo real) ----------
-let sse;
-function connectSSE() {
-  if (sse) sse.close();
-  sse = new EventSource('/api/events');
-  sse.onmessage = e => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (['scores_updated', 'picks_updated', 'jornada_created', 'jornada_finalized', 'jornada_deleted'].includes(msg.type)) {
-        if (currentView !== 'picks' || msg.type !== 'picks_updated') render();
-      }
-    } catch {}
-  };
-  sse.onerror = () => { sse.close(); setTimeout(connectSSE, 5000); };
+// ---------- Actualización automática ----------
+// Refresca la vista de Jornada cada 30 s (y al volver a la app) para ver
+// marcadores y tabla al día. No toca "Mi quiniela" para no borrar cambios sin guardar.
+let pollTimer;
+function startPolling() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && currentView === 'live') render();
+  }, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && currentView === 'live') render();
+  });
 }
 
 // ---------- Vista: Jornada (en vivo) ----------

@@ -1,17 +1,21 @@
 {
   "name": "quiniela-mx",
-  "version": "1.0.0",
-  "description": "Quiniela Liga MX para el grupo — pronósticos, resultados en vivo y acumulado semanal",
-  "main": "server/index.js",
-  "type": "commonjs",
+  "version": "2.0.0",
+  "description": "Quiniela Liga MX para el grupo — pronósticos, resultados en vivo y acumulado semanal (Cloudflare Workers + D1)",
+  "type": "module",
   "scripts": {
-    "start": "node server/index.js"
-  },
-  "engines": {
-    "node": ">=22"
+    "dev": "wrangler dev --port 3000",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "express": "^4.21.2",
-    "web-push": "^3.6.7"
+    "@block65/webcrypto-web-push": "^1.0.2"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "sharp@0.34.5": true,
+    "workerd@1.20260708.1": true
   }
 }

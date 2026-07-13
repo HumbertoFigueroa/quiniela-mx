@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="110" fill="#0c1f15"/>
+  <circle cx="256" cy="256" r="150" fill="#eaf5ee"/>
+  <path d="M256 156l38 28-14 45h-48l-14-45z" fill="#0c1f15"/>
+  <path d="M256 106a150 150 0 0 1 106 44l-30 34-46-14V126zM362 150a150 150 0 0 1 44 106h-46l-24-42zM406 256a150 150 0 0 1-44 106l-30-34 24-42zM362 362a150 150 0 0 1-106 44v-46l46-14zM256 406a150 150 0 0 1-106-44l30-34 46 14v46zM150 362a150 150 0 0 1-44-106h46l24 42zM106 256a150 150 0 0 1 44-106l30 34-24 42zM150 150a150 150 0 0 1 106-44v46l-46 14z" fill="#34d399" opacity="0.25"/>
+  <text x="256" y="470" font-family="Arial, sans-serif" font-size="60" font-weight="bold" fill="#34d399" text-anchor="middle">LIGA MX</text>
+</svg>

@@ -1,0 +1,17 @@
+{
+  "name": "quiniela-mx",
+  "version": "1.0.0",
+  "description": "Quiniela Liga MX para el grupo — pronósticos, resultados en vivo y acumulado semanal",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "web-push": "^3.6.7"
+  }
+}

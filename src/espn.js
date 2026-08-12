@@ -1,9 +1,8 @@
-// Cliente de la API pública de ESPN para la Liga MX (mex.1)
-const BASE_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard';
-
-// Caché en memoria para evitar saturar a ESPN (5 minutos)
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const apiCache = new Map();
+// Cliente para la API pública de ESPN (Liga MX: mex.1)
+const ENDPOINTS = [
+  'https://site.web.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard',
+  'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard'
+];
 
 function parseEvent(e) {
   const comp = e.competitions?.[0];
@@ -34,49 +33,36 @@ function fmtDate(d) {
 }
 
 async function fetchScoreboard(fromDate, toDate) {
-  const url = `${BASE_URL}?dates=${fmtDate(fromDate)}-${fmtDate(toDate)}`;
-  const now = Date.now();
+  const datesParam = `dates=${fmtDate(fromDate)}-${fmtDate(toDate)}`;
+  
+  // Encabezados para simular una petición legítima desde el navegador
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'es-MX,es;q=0.9',
+    'Referer': 'https://www.espn.com.mx/',
+    'Origin': 'https://www.espn.com.mx'
+  };
 
-  // 1. Si tenemos datos en caché de menos de 5 minutos, los usamos
-  if (apiCache.has(url)) {
-    const cached = apiCache.get(url);
-    if (now - cached.timestamp < CACHE_TTL_MS) {
-      return cached.data;
-    }
-  }
+  let lastError = null;
 
-  try {
-    // 2. Petición con User-Agent de navegador para burlar el bloqueo 403
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8'
-      },
-      signal: AbortSignal.timeout(15000)
-    });
+  // Intenta con los endpoints disponibles de ESPN en caso de bloqueo
+  for (const baseUrl of ENDPOINTS) {
+    try {
+      const url = `${baseUrl}?${datesParam}`;
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
 
-    if (!res.ok) {
-      // Si responde 403 y tenemos datos viejos en caché, los devolvemos en lugar de fallar
-      if (res.status === 403 && apiCache.has(url)) {
-        console.warn('[ESPN 403] Bloqueado por ESPN. Sirviendo datos previos de caché.');
-        return apiCache.get(url).data;
+      if (res.ok) {
+        const data = await res.json();
+        return (data.events || []).map(parseEvent).filter(Boolean);
       }
-      throw new Error(`ESPN respondió ${res.status}`);
+      lastError = new Error(`ESPN respondió ${res.status}`);
+    } catch (err) {
+      lastError = err;
     }
-
-    const data = await res.json();
-    const parsedData = (data.events || []).map(parseEvent).filter(Boolean);
-
-    // 3. Guardar en caché
-    apiCache.set(url, { timestamp: now, data: parsedData });
-    return parsedData;
-
-  } catch (err) {
-    // Fallback de emergencia si falla la red
-    if (apiCache.has(url)) return apiCache.get(url).data;
-    throw err;
   }
+
+  throw lastError || new Error('No se pudo conectar con ESPN');
 }
 
 export async function fetchUpcoming(days = 12) {

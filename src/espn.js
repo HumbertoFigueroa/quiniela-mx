@@ -1,160 +1,90 @@
-// Cliente de API-Football para la Liga MX (ID: 262)
-const API_KEY = '0c584fe5142c3de054dc15f715e197d3'; 
-const BASE_URL = 'https://v3.football.api-sports.io/fixtures';
+// Cliente de la API pública de ESPN para la Liga MX (mex.1)
+const BASE_URL = 'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard';
 
-// --- CONFIGURACIÓN DE LÍMITES Y HORARIOS ---
-const MAX_DAILY_REQUESTS = 95; // Margen de seguridad
-
-// Tiempos de caché dinámicos (en milisegundos)
-const CACHE_LIVE_MS = 3 * 60 * 1000;     // 3 min si hay partidos "in" (jugándose)
-const CACHE_IDLE_MS = 15 * 60 * 1000;    // 15 min si está en ventana activa pero no hay juego
-const CACHE_OFF_HOURS_MS = 60 * 60 * 1000; // 1 hora si está fuera de ventana horaria
-
-let dailyRequestCount = 0;
-let lastResetDate = new Date().getUTCDate();
-
+// Caché en memoria para evitar saturar a ESPN (5 minutos)
+const CACHE_TTL_MS = 5 * 60 * 1000;
 const apiCache = new Map();
 
-function checkAndResetDailyCounter() {
-  const currentDay = new Date().getUTCDate();
-  if (currentDay !== lastResetDate) {
-    dailyRequestCount = 0;
-    lastResetDate = currentDay;
-  }
-}
+function parseEvent(e) {
+  const comp = e.competitions?.[0];
+  if (!comp) return null;
 
-/**
- * Valida si la hora actual está dentro de la ventana de partidos (Hora Centro de México - UTC-6)
- */
-function isWithinMatchWindow() {
-  const now = new Date();
-  
-  // Convertir a hora del Centro de México (America/Mexico_City)
-  const mxTimeString = now.toLocaleString('en-US', { timeZone: 'America/Mexico_City' });
-  const mxDate = new Date(mxTimeString);
-  
-  const dayOfWeek = mxDate.getDay(); // 0 = Domingo, 1 = Lunes, ...
-  const hour = mxDate.getHours();    // Formato 24 hrs (0 - 23)
-
-  // Domingo: Transmisiones desde las 12:00 PM hasta las 23:00 PM
-  if (dayOfWeek === 0) {
-    return hour >= 12 && hour < 23;
-  }
-
-  // Resto de la semana: Transmisiones de 15:00 PM (3:00 PM) a 23:00 PM (11:00 PM)
-  return hour >= 15 && hour < 23;
-}
-
-function parseEvent(item) {
-  if (!item || !item.fixture || !item.teams) return null;
-
-  const { fixture, teams, goals, status } = item;
-
-  const shortStatus = status?.short || '';
-  let state = 'pre';
-  if (['1H', 'HT', '2H', 'ET', 'BT', 'P', 'LIVE'].includes(shortStatus)) {
-    state = 'in';
-  } else if (['FT', 'AET', 'PEN'].includes(shortStatus)) {
-    state = 'post';
-  }
-
-  let clock = '';
-  if (state === 'in') {
-    clock = status?.elapsed ? `${status.elapsed}'` : 'En vivo';
-  } else {
-    clock = status?.long || shortStatus;
-  }
+  const home = comp.competitors?.find(c => c.homeAway === 'home');
+  const away = comp.competitors?.find(c => c.homeAway === 'away');
+  if (!home || !away) return null;
 
   return {
-    espn_id: fixture.id.toString(),
-    kickoff: fixture.date,
-    home: teams.home?.name || '',
-    away: teams.away?.name || '',
-    home_logo: teams.home?.logo || '',
-    away_logo: teams.away?.logo || '',
-    home_score: goals.home ?? 0,
-    away_score: goals.away ?? 0,
-    state,
-    clock
+    espn_id: e.id,
+    kickoff: e.date,
+    home: home.team?.shortDisplayName || home.team?.displayName || '',
+    away: away.team?.shortDisplayName || away.team?.displayName || '',
+    home_logo: home.team?.logo || '',
+    away_logo: away.team?.logo || '',
+    home_score: parseInt(home.score || '0', 10),
+    away_score: parseInt(away.score || '0', 10),
+    state: e.status?.type?.state || 'pre',   // 'pre' | 'in' | 'post'
+    clock: e.status?.type?.state === 'in' 
+      ? (e.status.displayClock || `${e.status.period}'`) 
+      : (e.status?.type?.shortDetail || '')
   };
 }
 
 function fmtDate(d) {
-  return d.toISOString().split('T')[0];
+  return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
 async function fetchScoreboard(fromDate, toDate) {
-  checkAndResetDailyCounter();
-
-  const from = fmtDate(fromDate);
-  const to = fmtDate(toDate);
-  const url = `${BASE_URL}?league=262&season=2026&from=${from}&to=${to}`;
+  const url = `${BASE_URL}?dates=${fmtDate(fromDate)}-${fmtDate(toDate)}`;
   const now = Date.now();
-  const inWindow = isWithinMatchWindow();
 
-  // 1. Revisar Caché con TTL Dinámico
+  // 1. Si tenemos datos en caché de menos de 5 minutos, los usamos
   if (apiCache.has(url)) {
     const cached = apiCache.get(url);
-    const hasLiveGames = cached.data.some(event => event.state === 'in');
-
-    // Determinamos cuánto tiempo es válida la caché actual
-    let currentTTL = CACHE_OFF_HOURS_MS;
-    if (inWindow) {
-      currentTTL = hasLiveGames ? CACHE_LIVE_MS : CACHE_IDLE_MS;
-    }
-
-    if (now - cached.timestamp < currentTTL) {
+    if (now - cached.timestamp < CACHE_TTL_MS) {
       return cached.data;
     }
   }
 
-  // 2. Control por Fuera de Horario (si no hay caché previa y estamos fuera de ventana, igual hace la petición para poblar)
-  if (!inWindow && apiCache.has(url)) {
-    console.log('[API MatchWindow] Fuera de horario de partidos. Sirviendo caché guardada.');
-    return apiCache.get(url).data;
-  }
+  try {
+    // 2. Petición con User-Agent de navegador para burlar el bloqueo 403
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'es-MX,es;q=0.9,en;q=0.8'
+      },
+      signal: AbortSignal.timeout(15000)
+    });
 
-  // 3. Control de Cuota Diaria
-  if (dailyRequestCount >= MAX_DAILY_REQUESTS) {
-    console.warn(`[API Limit] Límite diario alcanzado (${dailyRequestCount}/${MAX_DAILY_REQUESTS}).`);
+    if (!res.ok) {
+      // Si responde 403 y tenemos datos viejos en caché, los devolvemos en lugar de fallar
+      if (res.status === 403 && apiCache.has(url)) {
+        console.warn('[ESPN 403] Bloqueado por ESPN. Sirviendo datos previos de caché.');
+        return apiCache.get(url).data;
+      }
+      throw new Error(`ESPN respondió ${res.status}`);
+    }
+
+    const data = await res.json();
+    const parsedData = (data.events || []).map(parseEvent).filter(Boolean);
+
+    // 3. Guardar en caché
+    apiCache.set(url, { timestamp: now, data: parsedData });
+    return parsedData;
+
+  } catch (err) {
+    // Fallback de emergencia si falla la red
     if (apiCache.has(url)) return apiCache.get(url).data;
-    throw new Error('Límite de peticiones diarias alcanzado.');
+    throw err;
   }
-
-  // 4. Petición HTTP a la API
-  dailyRequestCount++;
-  console.log(`[API Request] Petición #${dailyRequestCount} enviada (${inWindow ? 'Dentro de ventana' : 'Fuera de ventana'}).`);
-
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: {
-      'x-apisports-key': API_KEY
-    },
-    signal: AbortSignal.timeout(15000)
-  });
-
-  if (!res.ok) throw new Error(`API-Football respondió ${res.status}`);
-  
-  const data = await res.json();
-  const parsedData = (data.response || []).map(parseEvent).filter(Boolean);
-
-  // 5. Guardar en Caché
-  apiCache.set(url, {
-    timestamp: now,
-    data: parsedData
-  });
-
-  return parsedData;
 }
 
-// Próximos partidos
 export async function fetchUpcoming(days = 12) {
   const now = new Date();
   const to = new Date(now.getTime() + days * 24 * 3600 * 1000);
   return fetchScoreboard(now, to);
 }
 
-// Actualización de marcadores para los kickoffs
 export async function fetchForKickoffs(kickoffs) {
   if (!kickoffs || kickoffs.length === 0) return [];
   const dates = kickoffs.map(k => new Date(k).getTime());

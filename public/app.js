@@ -338,7 +338,166 @@ async function renderSeason() {
 }
 
 // ---------- Vista: Admin ----------
+const LIGA_MX_TEAMS = [
+  { name: 'América', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/227.png' },
+  { name: 'Atlas', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/216.png' },
+  { name: 'Atl. San Luis', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/15720.png' },
+  { name: 'Atlante', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/226.png' },
+  { name: 'Cruz Azul', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/218.png' },
+  { name: 'Guadalajara', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/219.png' },
+  { name: 'Juarez', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/17851.png' },
+  { name: 'León', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/228.png' },
+  { name: 'Mazatlán', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/18556.png' },
+  { name: 'Monterrey', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/220.png' },
+  { name: 'Necaxa', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/229.png' },
+  { name: 'Pachuca', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/234.png' },
+  { name: 'Puebla', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/231.png' },
+  { name: 'Queretaro', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/222.png' },
+  { name: 'Santos', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/225.png' },
+  { name: 'Tigres', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/232.png' },
+  { name: 'Tijuana', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/10125.png' },
+  { name: 'Toluca', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/223.png' },
+  { name: 'UNAM', logo: 'https://a.espncdn.com/i/teamlogos/soccer/500/233.png' }
+];
+
 let upcomingEvents = [];
+
+async function fetchUpcomingFromClient() {
+  const eps = [
+    'https://site.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard',
+    'https://site.web.api.espn.com/apis/site/v2/sports/soccer/mex.1/scoreboard',
+    'https://cdn.espn.com/core/soccer/scoreboard?xhr=1&league=mex.1'
+  ];
+
+  let base = null;
+  for (const ep of eps) {
+    try {
+      const res = await fetch(ep, { signal: AbortSignal.timeout(8000) });
+      if (res.ok) { base = await res.json(); break; }
+    } catch {}
+  }
+  if (!base) throw new Error('No se pudo conectar directamente con ESPN');
+
+  const root = base.content?.sbData || base;
+  const parseEv = e => {
+    const comp = e.competitions?.[0];
+    if (!comp) return null;
+    const home = comp.competitors?.find(c => c.homeAway === 'home');
+    const away = comp.competitors?.find(c => c.homeAway === 'away');
+    if (!home || !away) return null;
+    return {
+      espn_id: String(e.id),
+      kickoff: e.date,
+      home: home.team?.shortDisplayName || home.team?.displayName || '',
+      away: away.team?.shortDisplayName || away.team?.displayName || '',
+      home_logo: home.team?.logo || '',
+      away_logo: away.team?.logo || '',
+      state: e.status?.type?.state || 'pre'
+    };
+  };
+
+  const allEvents = new Map();
+  (root.events || []).map(parseEv).filter(e => e && e.state === 'pre').forEach(e => allEvents.set(e.espn_id, e));
+
+  const calendar = root.leagues?.[0]?.calendar || [];
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const maxDateStr = new Date(now.getTime() + 12 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+  const targetDates = [];
+  for (const entry of calendar) {
+    const dStr = (typeof entry === 'string' ? entry : entry.startDate || '').slice(0, 10);
+    if (dStr >= todayStr && dStr <= maxDateStr) targetDates.push(dStr.replace(/-/g, ''));
+  }
+
+  if (targetDates.length > 0) {
+    const promises = targetDates.map(async ds => {
+      for (const ep of eps) {
+        try {
+          const sep = ep.includes('?') ? '&' : '?';
+          const r = await fetch(`${ep}${sep}dates=${ds}`, { signal: AbortSignal.timeout(6000) });
+          if (!r.ok) continue;
+          const d = await r.json();
+          const rRoot = d.content?.sbData || d;
+          return (rRoot.events || []).map(parseEv).filter(e => e && e.state === 'pre');
+        } catch {}
+      }
+      return [];
+    });
+    const lists = await Promise.all(promises);
+    for (const list of lists) {
+      for (const ev of list) allEvents.set(ev.espn_id, ev);
+    }
+  }
+
+  return [...allEvents.values()].sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
+}
+
+async function loadUpcomingMatches() {
+  try {
+    const clientEvents = await fetchUpcomingFromClient();
+    if (clientEvents && clientEvents.length > 0) return clientEvents;
+  } catch (err) {
+    console.warn('Consulta directa a ESPN falló, intentando vía servidor...', err.message);
+  }
+  const { events } = await api('/admin/upcoming');
+  return events || [];
+}
+
+function renderUpcomingList() {
+  const container = $('#upcoming-list');
+  const btnWrap = $('#btn-create-wrap');
+  if (!container) return;
+
+  if (!upcomingEvents.length) {
+    container.innerHTML = `<div class="empty" style="padding:14px;font-size:13px">
+      No hay partidos en la lista aún.<br>Puedes cargarlos automáticamente con el botón de ESPN o agregar los partidos manualmente.
+    </div>`;
+    if (btnWrap) btnWrap.innerHTML = '';
+    return;
+  }
+
+  const selectedCount = upcomingEvents.filter(e => e.checked !== false).length;
+
+  container.innerHTML = `
+    <div style="margin:10px 0 6px 0;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted)">
+      <span><b>${selectedCount}</b> de ${upcomingEvents.length} partidos seleccionados</span>
+      <button type="button" class="btn-secondary" style="padding:3px 8px;font-size:11px" onclick="toggleSelectAllMatches()">
+        ${selectedCount === upcomingEvents.length ? 'Desmarcar todos' : 'Marcar todos'}
+      </button>
+    </div>
+    ${upcomingEvents.map((e, i) => `
+      <div class="admin-match-row">
+        <input type="checkbox" id="ev-${i}" ${e.checked !== false ? 'checked' : ''} onchange="upcomingEvents[${i}].checked = this.checked; renderUpcomingList()">
+        <img src="${esc(e.home_logo || 'icon.svg')}" width="22" height="22" onerror="this.src='icon.svg'">
+        <span style="font-weight:600">${esc(e.home)}</span>
+        <span style="color:var(--muted);font-size:11px">vs</span>
+        <span style="font-weight:600">${esc(e.away)}</span>
+        <img src="${esc(e.away_logo || 'icon.svg')}" width="22" height="22" onerror="this.src='icon.svg'">
+        <span class="when">${fmtDate(e.kickoff)}</span>
+        <button type="button" class="btn-secondary btn-danger" style="padding:2px 7px;font-size:11px;margin-left:4px" onclick="removeUpcomingMatch(${i})" title="Quitar de la jornada">✕</button>
+      </div>`).join('')}`;
+
+  if (btnWrap) {
+    btnWrap.innerHTML = `<button class="btn-primary" id="btn-create" style="margin-top:14px" ${selectedCount === 0 ? 'disabled' : ''}>
+      Crear jornada con los ${selectedCount} partidos seleccionados
+    </button>`;
+    const btn = $('#btn-create');
+    if (btn) btn.onclick = createJornada;
+  }
+}
+
+window.removeUpcomingMatch = i => {
+  upcomingEvents.splice(i, 1);
+  renderUpcomingList();
+};
+
+window.toggleSelectAllMatches = () => {
+  const allChecked = upcomingEvents.every(e => e.checked !== false);
+  upcomingEvents.forEach(e => e.checked = !allChecked);
+  renderUpcomingList();
+};
+
 async function renderAdmin() {
   const { jornadas } = await api('/jornadas');
   const { users } = await api('/admin/users');
@@ -376,13 +535,38 @@ async function renderAdmin() {
       </div>`;
   }
 
+  const teamOptions = LIGA_MX_TEAMS.map(t => `<option value="${esc(t.name)}" data-logo="${esc(t.logo)}">${esc(t.name)}</option>`).join('');
+
   $('#main').innerHTML = `
     <div class="section-title">Crear jornada</div>
     <div class="card">
       <label>Nombre<input id="j-name" value="Jornada ${nextNum}"></label>
       <label>Cuota por jugador (pesos)<input id="j-fee" type="number" value="100" min="0"></label>
-      <button class="btn-secondary" id="btn-load-matches" style="width:100%">📥 Cargar próximos partidos de la Liga MX</button>
-      <div id="upcoming-list"></div>
+      
+      <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <button class="btn-secondary" id="btn-load-matches" style="flex:1;min-width:180px">📥 Cargar partidos de la Liga MX (ESPN)</button>
+        <button class="btn-secondary" id="btn-toggle-manual" type="button" style="min-width:140px">➕ Partido manual</button>
+      </div>
+
+      <div id="manual-match-card" class="card hidden" style="margin-top:12px;background:var(--bg2);border-color:var(--border)">
+        <div style="font-weight:700;font-size:13px;margin-bottom:8px">Agregar partido manualmente</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label style="font-size:11px;margin-bottom:4px">Local</label>
+            <select id="m-home" style="margin-bottom:0">${teamOptions}</select>
+          </div>
+          <div>
+            <label style="font-size:11px;margin-bottom:4px">Visita</label>
+            <select id="m-away" style="margin-bottom:0">${teamOptions}</select>
+          </div>
+        </div>
+        <label style="margin-top:8px;font-size:11px;margin-bottom:4px">Fecha y hora (hora local)
+          <input type="datetime-local" id="m-kickoff">
+        </label>
+        <button type="button" class="btn-secondary" id="btn-add-manual" style="width:100%;margin-top:8px">➕ Agregar este partido a la lista</button>
+      </div>
+
+      <div id="upcoming-list" style="margin-top:8px"></div>
       <div id="btn-create-wrap"></div>
     </div>
     <div class="section-title">Jornadas</div>
@@ -391,27 +575,72 @@ async function renderAdmin() {
     <div class="section-title">Usuarios (${users.length})</div>
     <div class="card">${usersHtml}</div>`;
 
+  renderUpcomingList();
+
+  // Configurar datetime-local con fecha por defecto (próximo viernes/sábado)
+  const defaultKickoff = new Date(Date.now() + 2 * 24 * 3600 * 1000);
+  defaultKickoff.setHours(19, 0, 0, 0);
+  const pad = n => String(n).padStart(2, '0');
+  const kickoffDefaultStr = `${defaultKickoff.getFullYear()}-${pad(defaultKickoff.getMonth() + 1)}-${pad(defaultKickoff.getDate())}T${pad(defaultKickoff.getHours())}:${pad(defaultKickoff.getMinutes())}`;
+  const kInput = $('#m-kickoff');
+  if (kInput) kInput.value = kickoffDefaultStr;
+
+  const awaySelect = $('#m-away');
+  if (awaySelect && awaySelect.options.length > 1) awaySelect.selectedIndex = 1;
+
+  $('#btn-toggle-manual').onclick = () => {
+    $('#manual-match-card').classList.toggle('hidden');
+  };
+
+  $('#btn-add-manual').onclick = () => {
+    const home = $('#m-home').value;
+    const away = $('#m-away').value;
+    const kickoffVal = $('#m-kickoff').value;
+    if (home === away) return toast('El local y visitante no pueden ser el mismo', false);
+    if (!kickoffVal) return toast('Selecciona la fecha y hora del partido', false);
+
+    const homeTeam = LIGA_MX_TEAMS.find(t => t.name === home);
+    const awayTeam = LIGA_MX_TEAMS.find(t => t.name === away);
+    const kickoff = new Date(kickoffVal).toISOString();
+    const espn_id = 'manual-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+
+    upcomingEvents.push({
+      espn_id,
+      kickoff,
+      home,
+      away,
+      home_logo: homeTeam ? homeTeam.logo : '',
+      away_logo: awayTeam ? awayTeam.logo : '',
+      checked: true
+    });
+    upcomingEvents.sort((a, b) => new Date(a.kickoff) - new Date(b.kickoff));
+    renderUpcomingList();
+    toast(`✅ ${home} vs ${away} agregado`);
+  };
+
   $('#btn-load-matches').onclick = async () => {
-    $('#btn-load-matches').textContent = 'Cargando…';
+    $('#btn-load-matches').textContent = 'Cargando partidos…';
     try {
-      const { events } = await api('/admin/upcoming');
-      upcomingEvents = events;
-      if (!events.length) { $('#upcoming-list').innerHTML = '<div class="empty" style="padding:16px">No hay partidos próximos en ESPN (10 días).</div>'; return; }
-      $('#upcoming-list').innerHTML = events.map((e, i) => `
-        <div class="admin-match-row">
-          <input type="checkbox" id="ev-${i}" checked>
-          <img src="${esc(e.home_logo)}" width="22" height="22"> ${esc(e.home)} vs ${esc(e.away)} <img src="${esc(e.away_logo)}" width="22" height="22">
-          <span class="when">${fmtDate(e.kickoff)}</span>
-        </div>`).join('');
-      $('#btn-create-wrap').innerHTML = `<button class="btn-primary" id="btn-create" style="margin-top:12px">Crear jornada con los partidos seleccionados</button>`;
-      $('#btn-create').onclick = createJornada;
-    } catch (err) { toast(err.message, false); }
-    finally { $('#btn-load-matches').textContent = '📥 Cargar próximos partidos de la Liga MX'; }
+      const events = await loadUpcomingMatches();
+      if (!events.length) {
+        toast('No se encontraron partidos próximos en ESPN. Puedes agregarlos manualmente.', false);
+      } else {
+        upcomingEvents = events.map(e => ({ ...e, checked: true }));
+        toast(`✅ Se cargaron ${events.length} partidos`);
+      }
+      renderUpcomingList();
+    } catch (err) {
+      toast('Error al consultar ESPN (' + err.message + '). Puedes agregar los partidos manualmente.', false);
+      $('#manual-match-card')?.classList.remove('hidden');
+      renderUpcomingList();
+    } finally {
+      $('#btn-load-matches').textContent = '📥 Cargar partidos de la Liga MX (ESPN)';
+    }
   };
 }
 
 async function createJornada() {
-  const matches = upcomingEvents.filter((e, i) => $('#ev-' + i)?.checked);
+  const matches = upcomingEvents.filter(e => e.checked !== false);
   if (!matches.length) return toast('Selecciona al menos un partido', false);
   try {
     await api('/admin/jornadas', {
@@ -419,6 +648,7 @@ async function createJornada() {
       body: { name: $('#j-name').value, entry_fee: Number($('#j-fee').value), matches }
     });
     toast('✅ Jornada creada. ¡Avísale al grupo!');
+    upcomingEvents = [];
     liveJornadaId = 'current';
     renderAdmin();
   } catch (err) { toast(err.message, false); }
